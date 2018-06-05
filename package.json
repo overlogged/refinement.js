@@ -1,0 +1,11 @@
+{
+  "name": "refinement",
+  "version": "1.0.0",
+  "description": "Yet another contract library for JavaScript which benefits from static analyzers such as TAJS.",
+  "main": "./dist/main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "nicekingwei",
+  "license": "MIT"
+}
