@@ -5,8 +5,9 @@ var acorn_1 = require("acorn");
 var cp = require("child_process");
 var fs = require("fs");
 var walk = require('acorn/dist/walk');
-var tajs_exec = 'bin/tajs-all.jar';
-var preload = 'TAJS_makeContextSensitive(__rfjs_res,0);TAJS_makeContextSensitive(__rfjs_wrap,0);function __rfjs_res(y) {TAJS_addContextSensitivity(\'y\');var ret = TAJS_newObject();ret.__rfjs_r = (y == null) ? 0 : function () {return y;};return ret;}function __rfjs_wrap(x) {TAJS_addContextSensitivity(\'x\');if (typeof(x)=="object" && x.__rfjs_r) {return x.__rfjs_r;} else {return function () {return x;}}}';
+var tajs_exec = 'tajs -quiet';
+var preload = 'TAJS_makeContextSensitive(__rfjs_wrap,0);function __rfjs_null(){var ret=TAJS_newObject();ret.__rfjs_r=0;return ret;}function __rfjs_res(y){TAJS_addContextSensitivity("y");var ret=TAJS_newObject();ret.__rfjs_r=function(){return y};return ret}function __rfjs_wrap(x){TAJS_addContextSensitivity("x");if(typeof x=="object"&&x.__rfjs_r){return x.__rfjs_r}else{return function(){return x}}};\n';
+var rfjs_debug = false;
 function split_tajsinfo(str) {
     var arr = str.split(':');
     if (arr.length >= 2) {
@@ -17,7 +18,7 @@ function split_tajsinfo(str) {
         if (arr.length == 4) {
             return {
                 filename: new_filename,
-                line: parseInt(arr[1]),
+                line: parseInt(arr[1]) - 1,
                 column: parseInt(arr[2]),
                 info: arr[3].substring(1),
                 toString: function () {
@@ -51,16 +52,16 @@ function traverse_code(old_source) {
     var replace_table = [{ range: [0, 0], str: preload }];
     // CallExpression
     function handle_call(node, state, c) {
-        var reserved_fun = ['null', '__rfjs_res', 'undefined'];
+        var reserved_fun = ['null', '__rfjs_res', '__rfjs_null', 'undefined'];
         var fun_name = node.callee.name;
         if (fun_name == 'requires') {
             var r1 = { range: node.callee.range, str: 'if(!' };
-            var r2 = { range: [node.end, node.end], str: ') return __rfjs_res()' };
+            var r2 = { range: [node.end, node.end], str: ') return __rfjs_null()' };
             replace_table.push(r1, r2);
         }
         else if (fun_name == 'ensures') {
             var r1 = { range: node.callee.range, str: 'if(!(' };
-            var r2 = { range: [node.end, node.end], str: ')(r)) return __rfjs_res()' };
+            var r2 = { range: [node.end, node.end], str: ')(r)) return __rfjs_null()' };
             replace_table.push(r1, r2);
         }
         else if (fun_name == 'assert') {
@@ -69,7 +70,18 @@ function traverse_code(old_source) {
             replace_table.push(r1, r2);
         }
         else if (reserved_fun.filter(function (e) { return e == fun_name; }).length == 0) {
-            var r1 = { range: [node.range[0], node.range[0]], str: '__rfjs_wrap(' };
+            var args = node.arguments.length;
+            var sensitivity = '';
+            // if (fun_name && args > 0) {
+            //   for (let i = 1; i <= args; i++) {
+            //     sensitivity +=
+            //         'TAJS_makeContextSensitive(' + fun_name + ',' + i + ');';
+            //   }
+            // }
+            var r1 = {
+                range: [node.range[0], node.range[0]],
+                str: sensitivity + '__rfjs_wrap('
+            };
             var r2 = { range: [node.end, node.end], str: ')()' };
             replace_table.push(r1, r2);
         }
@@ -104,7 +116,6 @@ function traverse_code(old_source) {
         // judge if it is a function with specifications
         var exprs = node.body.body;
         var len = exprs.length;
-        // console.log(exprs);
         var requires_i = 0, ensures_i = len - 1;
         while (requires_i < len && is_requires(exprs[requires_i]))
             requires_i++;
@@ -113,19 +124,31 @@ function traverse_code(old_source) {
         if (requires_i != 0 || ensures_i != len - 1) {
             var main_start = requires_i == len ? exprs[len - 1].end : exprs[requires_i].start;
             var main_end = ensures_i == -1 ? exprs[0].start : exprs[ensures_i].end;
-            var r1 = {
-                range: [node.end - 1, node.end - 1],
-                str: 'return __rfjs_res(r);'
-            };
             if (main_start == main_end) {
-                var r2 = { range: [main_start, main_start], str: 'var r=undefined;' };
-                replace_table.push(r1, r2);
+                var r1 = {
+                    range: [node.end - 1, node.end - 1],
+                    str: 'return __rfjs_res(undefined);'
+                };
+                replace_table.push(r1);
             }
             else {
+                var r1 = {
+                    range: [node.end - 1, node.end - 1],
+                    str: 'return __rfjs_res(r);'
+                };
                 var r2 = { range: [main_start, main_start], str: 'var r = (function(){' };
                 var r3 = { range: [main_end, main_end], str: '})();' };
                 replace_table.push(r1, r2, r3);
             }
+        }
+        var args = node.params.length;
+        var fun_name = node.id ? node.id.name : undefined;
+        var sensitivity = '';
+        if (fun_name && args > 0) {
+            for (var i = 1; i <= args; i++) {
+                sensitivity += 'TAJS_makeContextSensitive(' + fun_name + ',' + i + ');';
+            }
+            replace_table.push({ range: [node.end, node.end], str: sensitivity });
         }
         // recursive
         if (node.id)
@@ -159,6 +182,9 @@ function generate_source(replace_table, old_source) {
     }
     return new_source;
 }
+/**
+ * transform js code
+ */
 function transform_js(filename) {
     var check_file = filename + '.rf.js';
     var old_source = fs.readFileSync(filename).toString();
@@ -166,21 +192,41 @@ function transform_js(filename) {
     var new_source = generate_source(replace_table, old_source);
     fs.unlink(check_file, function () { });
     new_source.forEach(function (e) { return fs.appendFileSync(check_file, e); });
-    // analysis
-    var res = cp.execSync('java -jar ' + tajs_exec + ' ' + check_file + ' ' + flags);
-    fs.unlinkSync(check_file);
-    console.log(res.toString().trim());
-    /*
-    let lines = res.toString().split('\n');
-  
-    // handle the output
-    for (let i = 0; i < lines.length; i++) {
-      let info = split_tajsinfo(lines[i]);
-      if (info && info.filename.search('rfjs-preload.js') == -1) {
-        console.log(info.toString());
-      }
-    }*/
 }
-// todo: import parser
-var flags = process.argv.slice(3).join(' ');
-transform_js(process.argv[2]);
+/**
+ * analysis
+ */
+function analysis(files, flags) {
+    var res = cp.execSync(tajs_exec + ' ' + files.join(' ') + ' ' + flags.join(' '));
+    console.log(tajs_exec + ' ' + files.map(function (e) { return e + '.rf.js'; }).join(' ') + ' ' + flags.join(' '));
+    console.log(files, flags);
+    if (!rfjs_debug)
+        files.forEach(function (e) { return fs.unlinkSync(e + '.rf.js'); });
+    var lines = res.toString().split('\n');
+    // handle the output
+    for (var i = 0; i < lines.length; i++) {
+        var info = split_tajsinfo(lines[i]);
+        if (info && (info.line == undefined || info.line != 0)) {
+            console.log(info.toString());
+        }
+    }
+}
+function main() {
+    var args = process.argv.slice(2);
+    var flags = [];
+    var files = [];
+    args.forEach(function (e) {
+        if (e == '-rfjs-debug') {
+            rfjs_debug = true;
+        }
+        else if (e[0] == '-') {
+            flags.push(e);
+        }
+        else {
+            files.push(e);
+        }
+    });
+    files.forEach(function (file) { return transform_js(file); });
+    analysis(files, flags);
+}
+main();

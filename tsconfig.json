@@ -1,6 +1,7 @@
 {
     "files": [
-        "src/main.ts"
+        "src/main.ts",
+        "src/tajs.ts"
     ],
     "compilerOptions": {
         "noImplicitAny": true,
