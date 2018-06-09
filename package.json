@@ -1,11 +1,37 @@
 {
   "name": "refinement",
   "version": "1.0.0",
+  "keywords": [
+    "javascript",
+    "contracts",
+    "gradual refinement type"
+  ],
+  "bin": {
+    "rfjs": "./dist/main.js"
+  },
   "description": "Yet another contract library for JavaScript which benefits from static analyzers such as TAJS.",
-  "main": "./dist/main.js",
+  "main": "dist/main.js",
   "scripts": {
+    "start": "node main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "directories": {
+    "bin": "./bin"
+  },
   "author": "nicekingwei",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NiceKingWei/refinement.js"
+  },
+  "dependencies": {
+    "acorn": "^5.6.2"
+  },
+  "devDependencies": {
+    "@types/acorn": "^4.0.3",
+    "@types/node": "^10.3.1",
+    "gulp": "^3.9.1",
+    "gulp-typescript": "^4.0.2",
+    "typescript": "^2.9.1"
+  }
 }
