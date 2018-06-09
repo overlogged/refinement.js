@@ -103,22 +103,29 @@ function traverse_code(old_source) {
         var is_ensures = is_spec('ensures');
         // judge if it is a function with specifications
         var exprs = node.body.body;
+        var len = exprs.length;
         // console.log(exprs);
-        var requires_i = 0, ensures_i = exprs.length - 1;
-        while (requires_i < exprs.length && is_requires(exprs[requires_i]))
+        var requires_i = 0, ensures_i = len - 1;
+        while (requires_i < len && is_requires(exprs[requires_i]))
             requires_i++;
         while (ensures_i >= 0 && is_ensures(exprs[ensures_i]))
             ensures_i--;
-        if (requires_i != 0 || ensures_i != exprs.length - 1) {
-            var main_start = exprs[requires_i].start;
-            var main_end = exprs[ensures_i].end;
-            var r1 = { range: [main_start, main_start], str: 'var r = (function(){' };
-            var r2 = { range: [main_end, main_end], str: '})();' };
-            var r3 = {
+        if (requires_i != 0 || ensures_i != len - 1) {
+            var main_start = requires_i == len ? exprs[len - 1].end : exprs[requires_i].start;
+            var main_end = ensures_i == -1 ? exprs[0].start : exprs[ensures_i].end;
+            var r1 = {
                 range: [node.end - 1, node.end - 1],
                 str: 'return __rfjs_res(r);'
             };
-            replace_table.push(r1, r2, r3);
+            if (main_start == main_end) {
+                var r2 = { range: [main_start, main_start], str: 'var r=undefined;' };
+                replace_table.push(r1, r2);
+            }
+            else {
+                var r2 = { range: [main_start, main_start], str: 'var r = (function(){' };
+                var r3 = { range: [main_end, main_end], str: '})();' };
+                replace_table.push(r1, r2, r3);
+            }
         }
         // recursive
         if (node.id)

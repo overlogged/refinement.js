@@ -105,22 +105,29 @@ function traverse_code(old_source: string) {
 
     // judge if it is a function with specifications
     let exprs = node.body.body;
+    let len = exprs.length;
     // console.log(exprs);
-    let requires_i = 0, ensures_i = exprs.length - 1;
-    while (requires_i < exprs.length && is_requires(exprs[requires_i]))
+    let requires_i = 0, ensures_i = len - 1;
+    while (requires_i < len && is_requires(exprs[requires_i]))
       requires_i++;
     while (ensures_i >= 0 && is_ensures(exprs[ensures_i])) ensures_i--;
 
-    if (requires_i != 0 || ensures_i != exprs.length - 1) {
-      let main_start = exprs[requires_i].start;
-      let main_end = exprs[ensures_i].end;
-      let r1 = {range: [main_start, main_start], str: 'var r = (function(){'};
-      let r2 = {range: [main_end, main_end], str: '})();'};
-      let r3 = {
+    if (requires_i != 0 || ensures_i != len - 1) {
+      let main_start = requires_i==len?exprs[len-1].end:exprs[requires_i].start;
+      let main_end = ensures_i==-1?exprs[0].start:exprs[ensures_i].end;
+
+      let r1 = {
         range: [node.end - 1, node.end - 1],
         str: 'return __rfjs_res(r);'
       };
-      replace_table.push(r1, r2, r3);
+      if(main_start==main_end){
+        let r2 = {range:[main_start,main_start],str:'var r=undefined;'}
+        replace_table.push(r1, r2);
+      }else{
+        let r2 = {range: [main_start, main_start], str: 'var r = (function(){'};
+        let r3 = {range: [main_end, main_end], str: '})();'};
+        replace_table.push(r1, r2, r3);
+      }
     }
 
     // recursive

@@ -12,7 +12,7 @@
   "description": "Yet another contract library for JavaScript which benefits from static analyzers such as TAJS.",
   "main": "dist/main.js",
   "scripts": {
-    "start": "node main.js",
+    "start": "node ./bin/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "directories": {
