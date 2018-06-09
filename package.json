@@ -7,7 +7,7 @@
     "gradual refinement type"
   ],
   "bin": {
-    "rfjs": "./dist/main.js"
+    "rfjs": "./bin/main.js"
   },
   "description": "Yet another contract library for JavaScript which benefits from static analyzers such as TAJS.",
   "main": "dist/main.js",
