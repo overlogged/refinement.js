@@ -48,3 +48,10 @@ function sqrt(x){
     ensures(function(res)=>{return res>=0;});
 }
 ```
+
+#### Try it now
+```
+rfjs example/1.js
+rfjs example/2.js
+rfjs example/3.js
+```
