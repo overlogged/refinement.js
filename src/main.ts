@@ -7,10 +7,15 @@ const walk = require('acorn/dist/walk');
 
 let tajs_exec = 'tajs -quiet';
 const preload =
-    'TAJS_makeContextSensitive(__rfjs_wrap,0);function __rfjs_null(){var ret=TAJS_newObject();ret.__rfjs_r=0;return ret;}function __rfjs_res(y){TAJS_addContextSensitivity("y");var ret=TAJS_newObject();ret.__rfjs_r=function(){return y};return ret}function __rfjs_wrap(x){TAJS_addContextSensitivity("x");if(typeof x=="object"&&x.__rfjs_r){return x.__rfjs_r}else{return function(){return x}}};\n';
+    'function __rfjs_null(){var ret=TAJS_newObject();ret.__rfjs_r=0;return ret}function __rfjs_res(y){TAJS_addContextSensitivity("y");var ret=TAJS_newObject();ret.__rfjs_r=function(){return y};return ret}function __rfjs_wrap(){function fun(x){TAJS_addContextSensitivity("x");if(typeof x=="object"&&x.__rfjs_r){return x.__rfjs_r}else{return function(){return x}}}TAJS_makeContextSensitive(fun,0);return fun};\n';
 
 let rfjs_debug = false;
-
+let help_info =
+    'refinement.js - Yet another contract library for JavaScript which benefits from static analyzers such as TAJS.\n' +
+    'Usage: rfjs [OPTION]... [FILE]...\n' +
+    '-help:\t\t\tShow help information.\n' +
+    '-rfjs-debug:\t\tDon\'t remove the target code after analysis.\n' +
+    'Other options will be passed to TAJS.'
 
 function split_tajsinfo(str: string) {
   let arr = str.split(':');
@@ -47,41 +52,63 @@ class ReplaceItem {
   str: string;
 }
 
+enum TraceType {
+  ASSERTION,
+  CALL,
+  ENSURES
+}
+
+class TraceItem {
+  line: number;
+  type: TraceType;
+}
+
 /**
  * traverse ast and produce replace table
  */
 function traverse_code(old_source: string) {
-  let ast = parse(old_source, {ranges: true});
+  let ast = parse(old_source, {ranges: true, locations: true});
   let replace_table: ReplaceItem[] = [{range: [0, 0], str: preload}];
+  let trace_table: TraceItem[] = [];
 
   // CallExpression
   function handle_call(node: any, state: Object, c: Function) {
     let reserved_fun = ['null', '__rfjs_res', '__rfjs_null', 'undefined'];
-    let fun_name = node.callee.name;
+    let fun_name =
+        old_source.substring(node.callee.range[0], node.callee.range[1]);
     if (fun_name == 'requires') {
       let r1 = {range: node.callee.range, str: 'if(!'};
       let r2 = {range: [node.end, node.end], str: ') return __rfjs_null()'};
       replace_table.push(r1, r2);
     } else if (fun_name == 'ensures') {
+      trace_table.push({line: node.loc.start.line, type: TraceType.ENSURES});
       let r1 = {range: node.callee.range, str: 'if(!('};
-      let r2 = {range: [node.end, node.end], str: ')(r)) return __rfjs_null()'};
+      let r2 = {
+        range: [node.end, node.end],
+        str: ')(r)) try {null();}catch(ex){};'
+      };
       replace_table.push(r1, r2);
     } else if (fun_name == 'assert') {
+      trace_table.push({line: node.loc.start.line, type: TraceType.ASSERTION});
       let r1 = {range: node.callee.range, str: '(function(){if(!('};
-      let r2 = {range: [node.end, node.end], str: ')) {null();}})()'};
+      let r2 = {
+        range: [node.end, node.end],
+        str: ')) {try {null();}catch(ex){};}})()'
+      };
       replace_table.push(r1, r2);
     } else if (reserved_fun.filter(e => e == fun_name).length == 0) {
+      trace_table.push({line: node.loc.start.line, type: TraceType.CALL});
       let args = node.arguments.length;
-      let sensitivity = '';
-      // if (fun_name && args > 0) {
-      //   for (let i = 1; i <= args; i++) {
-      //     sensitivity +=
-      //         'TAJS_makeContextSensitive(' + fun_name + ',' + i + ');';
-      //   }
-      // }
+      let sensitivity = [];
+      if (fun_name && args > 0) {
+        for (let i = 1; i <= args; i++) {
+          sensitivity.push(
+              'TAJS_makeContextSensitive(' + fun_name + ',' + i + ')');
+        }
+      }
       let r1 = {
         range: [node.range[0], node.range[0]],
-        str: sensitivity + '__rfjs_wrap('
+        str: '__rfjs_wrap(' + sensitivity.join(',') + ')('
       };
       let r2 = {range: [node.end, node.end], str: ')()'};
       replace_table.push(r1, r2);
@@ -146,15 +173,16 @@ function traverse_code(old_source: string) {
       }
     }
 
-    let args = node.params.length;
-    let fun_name = node.id ? node.id.name : undefined;
-    let sensitivity = '';
-    if (fun_name && args > 0) {
-      for (let i = 1; i <= args; i++) {
-        sensitivity += 'TAJS_makeContextSensitive(' + fun_name + ',' + i + ');';
-      }
-      replace_table.push({range: [node.end, node.end], str: sensitivity});
-    }
+    // let args = node.params.length;
+    // let fun_name = node.id ? node.id.name : undefined;
+    // let sensitivity = '';
+    // if (fun_name && args > 0) {
+    //   for (let i = 1; i <= args; i++) {
+    //     sensitivity += 'TAJS_makeContextSensitive(' + fun_name + ',' + i +
+    //     ');';
+    //   }
+    //   replace_table.push({range: [node.end, node.end], str: sensitivity});
+    // }
 
     // recursive
     if (node.id) c(node.id, state);
@@ -171,7 +199,10 @@ function traverse_code(old_source: string) {
     ArrowFunctionExpression: handle_fun
   });
 
-  return replace_table.sort((a, b) => a.range[0] - b.range[0]);
+  return {
+    replace_table: replace_table.sort((a, b) => a.range[0] - b.range[0]),
+    trace_table: trace_table
+  };
 }
 
 /**
@@ -181,6 +212,8 @@ function generate_source(replace_table: ReplaceItem[], old_source: string) {
   let index = 0;
   let new_source: string[] = [];
   let length = old_source.length;
+  replace_table.push(
+      {range: [length, length], str: '\n/* generated by refinement.js */'});
   for (let i in replace_table) {
     let {range, str} = replace_table[i];
     new_source.push(old_source.substring(index, range[0]));
@@ -190,58 +223,92 @@ function generate_source(replace_table: ReplaceItem[], old_source: string) {
   return new_source;
 }
 
-
 /**
  * transform js code
  */
 function transform_js(filename: string) {
   let check_file = filename + '.rf.js';
   let old_source = fs.readFileSync(filename).toString();
-  let replace_table = traverse_code(old_source);
+  let {replace_table, trace_table} = traverse_code(old_source);
   var new_source = generate_source(replace_table, old_source);
   fs.unlink(check_file, function() {});
   new_source.forEach((e: string) => fs.appendFileSync(check_file, e));
+  return trace_table;
 }
-
 
 /**
  * analysis
  */
 function analysis(files: string[], flags: string[]) {
-  let res =
-      cp.execSync(tajs_exec + ' ' + files.join(' ') + ' ' + flags.join(' '));
-
-  console.log(tajs_exec + ' ' + files.map(e=>e+'.rf.js').join(' ') + ' ' + flags.join(' '));
-  console.log(files, flags);
-  if(!rfjs_debug) files.forEach(e => fs.unlinkSync(e + '.rf.js'));
-
-  let lines = res.toString().split('\n');
-
-  // handle the output
-  for (let i = 0; i < lines.length; i++) {
-    let info = split_tajsinfo(lines[i]);
-    if (info && (info.line == undefined || info.line != 0)) {
-      console.log(info.toString());
-    }
-  }
+  let check_files = files.map(e => e + '.rf.js');
+  let res = cp.execSync(
+      tajs_exec + ' ' + check_files.join(' ') + ' ' + flags.join(' '));
+  if (!rfjs_debug) check_files.forEach(e => fs.unlinkSync(e));
+  return res;
 }
 
 function main() {
   let args = process.argv.slice(2);
+  let help = false;
   let flags: string[] = [];
   let files: string[] = [];
   args.forEach((e: string) => {
     if (e == '-rfjs-debug') {
       rfjs_debug = true;
+    } else if (e == '--help' || e=='-help') {
+      help = true;
     } else if (e[0] == '-') {
       flags.push(e);
     } else {
       files.push(e);
     }
   });
+  if (files.length == 0 || help) {
+    console.log(help_info);
+  } else {
+    let trace_map: {[key: string]: TraceItem[]} = {};
+    files.forEach(file => (trace_map[file] = transform_js(file)));
+    let report = analysis(files, flags);
 
-  files.forEach(file => transform_js(file));
-  analysis(files, flags);
+    // change the analysis report
+    let lines = report.toString().split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      let info = split_tajsinfo(lines[i]);
+      if (info && info.line != null && info.line == 0) continue;
+      if (info && info.info) {
+        let trace_m = trace_map[info.filename];
+        if (trace_m) {
+          for (let j in trace_m) {
+            let e = trace_m[j];
+            if (e.line == info.line) {
+              let index = info.info.search('TypeError, call to non-function');
+              if (index == -1)
+                index = info.info.search(
+                    'TypeError, accessing property of null/undefined');
+              if (index == -1) continue;
+
+              let head = info.info.substring(0, index);
+              switch (e.type) {
+                case TraceType.ASSERTION:
+                  info.info = head + 'Assertion failed';
+                  break;
+                case TraceType.CALL:
+                  info.info = head + 'The precondition might not hold';
+                  break;
+                case TraceType.ENSURES:
+                  info.info = head + 'The postcondition might not hold';
+                  break;
+              }
+            }
+          }
+        }
+        console.log(info.toString());
+      } else if (lines[i] != '') {
+        console.log(lines[i]);
+      }
+    }
+  }
 }
 
 main();

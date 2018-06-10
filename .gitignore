@@ -19,3 +19,5 @@ tmp/
 .DS_Store
 
 test*
+
+*.rf.js
